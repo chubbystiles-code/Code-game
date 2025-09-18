@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEC Wire Sizing Game</title>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; background: #fff; display: flex; flex-direction: column; align-items: center; }
+        canvas { border: 1px solid black; max-width: 100%; height: auto; }
+        #game-container { width: 100%; max-width: 800px; text-align: center; }
+        #scenario, #feedback, #score { color: black; margin: 10px; }
+        #choices { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+        .choice-btn { width: 80px; height: 40px; background: #0000FF; color: white; border: none; font-size: 16px; cursor: pointer; border-radius: 5px; }
+        .choice-btn:hover { background: #0000CC; }
+        #feedback.correct { color: green; }
+        #feedback.wrong { color: red; }
+        @media (max-width: 600px) {
+            #scenario { font-size: 14px; }
+            .choice-btn { width: 70px; font-size: 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="score">Score: 0</div>
+        <div id="scenario"></div>
+        <canvas id="gameCanvas" width="800" height="100"></canvas>
+        <div id="choices"></div>
+        <div id="feedback"></div>
+    </div>
+    <script>
+        // Wire sizes and NEC data (same as Python version)
+        const WIRE_SIZES = ['14', '12', '10', '8', '6', '4', '3', '2', '1', '1/0', '2/0', '3/0', '4/0', '250', '300', '350', '400', '500', '600', '700', '750', '800', '900', '1000'];
+        const CM_DICT = {'14': 4110, '12': 6530, '10': 10380, '8': 16510, '6': 26240, '4': 41740, '3': 52620, '2': 66360, '1': 83690, '1/0': 105600, '2/0': 133100, '3/0': 167800, '4/0': 211600, '250': 250000, '300': 300000, '350': 350000, '400': 400000, '500': 500000, '600': 600000, '700': 700000, '750': 750000, '800': 800000, '900': 900000, '1000': 1000000};
+        const K_COPPER = 12.9;
+        const K_ALUMINUM = 21.2;
+        const COPPER_AMP = {
+            60: {'14':15, '12':20, '10':30, '8':40, '6':55, '4':70, '3':85, '2':95, '1':110, '1/0':125, '2/0':145, '3/0':165, '4/0':195, '250':215, '300':240, '350':260, '400':280, '500':320, '600':350, '700':385, '750':400, '800':410, '900':435, '1000':455},
+            75: {'14':20, '12':25, '10':35, '8':50, '6':65, '4':85, '3':100, '2':115, '1':130, '1/0':150, '2/0':175, '3/0':200, '4/0':230, '250':255, '300':285, '350':310, '400':335, '500':380, '600':420, '700':460, '750':475, '800':490, '900':520, '1000':545},
+            90: {'14':25, '12':30, '10':40, '8':55, '6':75, '4':95, '3':115, '2':130, '1':145, '1/0':170, '2/0':195, '3/0':225, '4/0':260, '250':290, '300':320, '350':350, '400':380, '500':430, '600':475, '700':520, '750':535, '800':555, '900':585, '1000':615}
+        };
+        const ALUMINUM_AMP = {
+            60: {'12':15, '10':25, '8':35, '6':40, '4':55, '3':65, '2':75, '1':85, '1/0':100, '2/0':115, '3/0':130, '4/0':150, '250':170, '300':195, '350':210, '400':225, '500':260, '600':285, '700':310, '750':320, '800':330, '900':355, '1000':375},
+            75: {'12':20, '10':30, '8':40, '6':50, '4':65, '3':75, '2':90, '1':100, '1/0':120, '2/0':135, '3/0':155, '4/0':180, '250':205, '300':230, '350':250, '400':270, '500':310, '600':340, '700':375, '750':385, '800':400, '900':425, '1000':445},
+            90: {'12':25, '10':35, '8':45, '6':55, '4':75, '3':85, '2':100, '1':115, '1/0':135, '2/0':150, '3/0':175, '4/0':205, '250':230, '300':260, '350':280, '400':305, '500':350, '600':385, '700':420, '750':435, '800':450, '900':480, '1000':500}
+        };
+        const AMBIENT_CORR = {
+            60: { '11-15':1.22, '16-20':1.15, '21-25':1.08, '26-30':1.00, '31-35':0.91, '36-40':0.82, '41-45':0.71, '46-50':0.58, '51-55':0.41 },
+            75: { '11-15':1.15, '16-20':1.11, '21-25':1.05, '26-30':1.00, '31-35':0.94, '36-40':0.88, '41-45':0.82, '46-50':0.75, '51-55':0.67, '56-60':0.58, '61-65':0.47, '66-70':0.33 },
+            90: { '11-15':1.12, '16-20':1.08, '21-25':1.04, '26-30':1.00, '31-35':0.96, '36-40':0.91, '41-45':0.87, '46-50':0.82, '51-55':0.76, '56-60':0.71, '61-65':0.65, '66-70':0.58, '71-75':0.50, '76-80':0.41, '81-85':0.29 }
+        };
+        const ADJ_FACTORS = { '4-6':0.8, '7-9':0.7, '10-20':0.5, '21-30':0.45, '31-40':0.4, '41-999':0.35 };
+        const SCENARIO_TYPES = [
+            "kitchen outlet circuit", "bathroom lighting", "garage feeder", "office HVAC unit", "warehouse lighting panel",
+            "commercial refrigerator", "residential dryer", "apartment building service entrance", "store lighting", "factory machine"
+        ];
+
+        // Game logic
+        let score = 0;
+        let currentDesc, currentChoices, currentCorrect;
+
+        function getAmbientCorr(tempRating, ambient) {
+            for (let range in AMBIENT_CORR[tempRating]) {
+                let [min, max] = range.split('-').map(Number);
+                if (ambient >= min && ambient <= max) return AMBIENT_CORR[tempRating][range];
+            }
+            return 1.0;
+        }
+
+        function getAdjFactor(numCond) {
+            if (numCond <= 3) return 1.0;
+            for (let range in ADJ_FACTORS) {
+                let [min, max] = range.split('-').map(Number);
+                if (numCond >= min && numCond <= max) return ADJ_FACTORS[range];
+            }
+            return 0.35;
+        }
+
+        function findMinWire(requiredAmp, material, tempRating, ambientCorr, adjFactor, sizes, ampTable) {
+            for (let size of sizes) {
+                let baseAmp = ampTable[size] || 0;
+                let effectiveAmp = baseAmp * ambientCorr * adjFactor;
+                if (effectiveAmp >= requiredAmp) return size;
+            }
+            return sizes[sizes.length - 1];
+        }
+
+        function calculateMinCmForVd(amps, lengthFt, voltage, maxVdPercent, material, isThreePhase) {
+            let k = material === 'Copper' ? K_COPPER : K_ALUMINUM;
+            let vd = (maxVdPercent / 100) * voltage;
+            return isThreePhase ? (Math.sqrt(3) * k * lengthFt * amps) / vd : (2 * k * lengthFt * amps) / vd;
+        }
+
+        function findMinWireForVd(minCm, sizes, cmDict) {
+            for (let size of sizes) {
+                if (cmDict[size] >= minCm) return size;
+            }
+            return sizes[sizes.length - 1];
+        }
+
+        function generateScenario() {
+            let buildingType = Math.random() < 0.5 ? 'residential' : 'commercial';
+            let scenarioType = SCENARIO_TYPES[Math.floor(Math.random() * SCENARIO_TYPES.length)];
+            let material = Math.random() < 0.5 ? 'Copper' : 'Aluminum';
+            let tempRating = [60, 75, 90][Math.floor(Math.random() * 3)];
+            let requiredAmp = Math.floor(Math.random() * (500 - 10 + 1)) + 10;
+            let ambientTemp = Math.random() < 0.5 ? Math.floor(Math.random() * (50 - 20 + 1)) + 20 : 30;
+            let numCond = Math.random() < 0.3 ? Math.floor(Math.random() * (20 - 4 + 1)) + 4 : Math.floor(Math.random() * 3) + 1;
+            let includeVd = Math.random() < 0.4;
+            let lengthFt = includeVd ? Math.floor(Math.random() * (500 - 50 + 1)) + 50 : 0;
+            let voltage = buildingType === 'residential' ? (Math.random() < 0.5 ? 120 : 240) : (Math.random() < 0.5 ? 208 : 480);
+            let isThreePhase = buildingType === 'commercial' && Math.random() < 0.7;
+            let maxVdPercent = Math.random() < 0.5 ? 3 : 5;
+
+            let ampTable = material === 'Copper' ? COPPER_AMP[tempRating] : ALUMINUM_AMP[tempRating];
+            let ambientCorr = getAmbientCorr(tempRating, ambientTemp);
+            let adjFactor = getAdjFactor(numCond);
+
+            let ampSize = findMinWire(requiredAmp, material, tempRating, ambientCorr, adjFactor, WIRE_SIZES, ampTable);
+
+            let vdSize = null;
+            if (includeVd) {
+                let minCm = calculateMinCmForVd(requiredAmp, lengthFt, voltage, maxVdPercent, material, isThreePhase);
+                vdSize = findMinWireForVd(minCm, WIRE_SIZES, CM_DICT);
+            }
+
+            let correctSize = ampSize;
+            if (vdSize) {
+                let idxAmp = WIRE_SIZES.indexOf(ampSize);
+                let idxVd = WIRE_SIZES.indexOf(vdSize);
+                correctSize = WIRE_SIZES[Math.max(idxAmp, idxVd)];
+            }
+
+            let desc = `In a ${buildingType} ${scenarioType}, for a circuit requiring ${requiredAmp}A, using ${material} conductors rated at ${tempRating}°C`;
+            if (ambientTemp !== 30) desc += `, with ambient temperature of ${ambientTemp}°C`;
+            if (numCond > 3) desc += `, and ${numCond} current-carrying conductors in the raceway`;
+            if (includeVd) {
+                let phaseStr = isThreePhase ? "three-phase" : "single-phase";
+                desc += `, over a distance of ${lengthFt} ft at ${voltage}V ${phaseStr}, with max voltage drop of ${maxVdPercent}%`;
+            }
+            desc += ", what is the minimum wire size (AWG/kcmil)?";
+
+            let correctIdx = WIRE_SIZES.indexOf(correctSize);
+            let choices = [correctSize];
+            while (choices.length < 4) {
+                let offset = Math.floor(Math.random() * 7) - 3;
+                if (offset !== 0) {
+                    let tryIdx = Math.max(0, Math.min(WIRE_SIZES.length - 1, correctIdx + offset));
+                    let choice = WIRE_SIZES[tryIdx];
+                    if (!choices.includes(choice)) choices.push(choice);
+                }
+            }
+            choices.sort(() => Math.random() - 0.5);
+
+            return [desc, choices, correctSize];
+        }
+
+        // Initialize game
+        let scoreElement = document.getElementById('score');
+        let scenarioElement = document.getElementById('scenario');
+        let choicesElement = document.getElementById('choices');
+        let feedbackElement = document.getElementById('feedback');
+
+        function newScenario() {
+            [currentDesc, currentChoices, currentCorrect] = generateScenario();
+            scenarioElement.textContent = currentDesc;
+            choicesElement.innerHTML = '';
+            currentChoices.forEach(choice => {
+                let btn = document.createElement('button');
+                btn.className = 'choice-btn';
+                btn.textContent = choice;
+                btn.addEventListener('click', () => checkAnswer(choice));
+                choicesElement.appendChild(btn);
+            });
+            feedbackElement.textContent = '';
+            feedbackElement.className = '';
+        }
+
+        function checkAnswer(choice) {
+            if (choice === currentCorrect) {
+                feedbackElement.textContent = 'Correct!';
+                feedbackElement.className = 'correct';
+                score++;
+            } else {
+                feedbackElement.textContent = `Wrong! Correct is ${currentCorrect}`;
+                feedbackElement.className = 'wrong';
+            }
+            scoreElement.textContent = `Score: ${score}`;
+            setTimeout(newScenario, 2000);
+        }
+
+        // Start game
+        newScenario();
+
+        // Canvas for basic visual (optional, e.g., a wire graphic)
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = 'brown';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(50, 50);
+            ctx.lineTo(canvas.width - 50, 50);
+            ctx.stroke();
+            requestAnimationFrame(draw);
+        }
+        draw();
+    </script>
+</body>
+</html>
